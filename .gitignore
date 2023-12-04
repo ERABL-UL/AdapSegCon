@@ -1,0 +1,5 @@
+**/__pycache__/
+__pycache__/
+**/**/__pycache__/
+/tools/percent.txt
+/tools/percentiles_split.json

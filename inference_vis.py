@@ -98,8 +98,8 @@ if __name__ == "__main__":
 
     parser.add_argument('--dataset-name', type=str, default='SemanticKITTI',
                         help='Name of dataset (default: SemanticKITTI')
-    parser.add_argument('--data-dir', type=str, default='/home/reza/PHD/Data/KITTI360/fps_knn',
-                        help='Path to dataset (default: ./Datasets/ModelNet/modelnet40_normal_resampled')
+    parser.add_argument('--data-dir', type=str, default='./Datasets/KITTI360/fps_knn',
+                        help='Path to dataset (default: ./Datasets/KITTI360/fps_knn')
     parser.add_argument('--use-cuda', action='store_true', default=True,
                         help='using cuda (default: True')
     parser.add_argument('--device-id', type=int, default=0,
@@ -112,12 +112,12 @@ if __name__ == "__main__":
                         help='Sparse model to be used (default: MinkUNet')
     parser.add_argument('--use-normals', action='store_true', default=False,
                         help='use points normals (default: False')
-    parser.add_argument('--log-dir', type=str, default='checkpoint/fine_tune/exp3_old',
-                        help='logging directory (default: checkpoint/downstream_task)')
+    parser.add_argument('--log-dir', type=str, default='checkpoint/fine_tune',
+                        help='logging directory (default: checkpoint/fine_tune)')
     parser.add_argument('--best', type=str, default='lastepoch14',
-                        help='best loss or accuracy over training (default: lastepoch19)')
-    parser.add_argument('--checkpoint', type=str, default='segment_contrast_1p0_lastepoch199',
-                        help='model checkpoint (default: segment_contrast_0p5_lastepoch199)')
+                        help='best loss or accuracy over training (default: lastepoch14)')
+    parser.add_argument('--checkpoint', type=str, default='segment_contrast_1p0',
+                        help='model checkpoint (default: segment_contrast_1p0)')
     parser.add_argument('--batch-size', type=int, default=1, metavar='N',
                         help='input inference batch-size')
     parser.add_argument('--visualize-pcd', action='store_true', default=False,
@@ -132,42 +132,33 @@ if __name__ == "__main__":
     device = torch.device("cuda")
     torch.cuda.set_device(0)
     print('GPU')
-    
-
-    best_epoch = "lastepoch14"
-    checkpoints = ["segment_contrast_1p0"]
     set_deterministic()
-    # for best_epoch in best_epochs:
-    for ch in checkpoints:
-        args.checkpoint = ch
-        args.best = best_epoch
-
     # define backbone architecture
-        resnet = get_model(args, dtype)
-        resnet.eval()
+    resnet = get_model(args, dtype)
+    resnet.eval()
+
+    classifier = get_classifier_head(args, dtype)
+    classifier.eval()
+
+    model_filename = f'{args.best}_model_{args.checkpoint}.pt'
+    classifier_filename = f'{args.best}_model_head_{args.checkpoint}.pt'
+    print(model_filename, classifier_filename)
+    # load pretained weights
+    if os.path.isfile(f'{args.log_dir}/{model_filename}') and os.path.isfile(f'{args.log_dir}/{classifier_filename}'):
+        checkpoint = torch.load(f'{args.log_dir}/{model_filename}')
+        resnet.load_state_dict(checkpoint['model'])
+        epoch = checkpoint['epoch']
+
+        checkpoint = torch.load(f'{args.log_dir}/{classifier_filename}')
+        classifier.load_state_dict(checkpoint['model'])
+
+        print(f'Loading model: {args.checkpoint}, from epoch: {epoch}')
+    else:
+        print('Trained model not found!')
+        import sys
+        sys.exit()
     
-        classifier = get_classifier_head(args, dtype)
-        classifier.eval()
     
-        model_filename = f'{args.best}_model_{args.checkpoint}.pt'
-        classifier_filename = f'{args.best}_model_head_{args.checkpoint}.pt'
-        print(model_filename, classifier_filename)
-        # load pretained weights
-        if os.path.isfile(f'{args.log_dir}/{model_filename}') and os.path.isfile(f'{args.log_dir}/{classifier_filename}'):
-            checkpoint = torch.load(f'{args.log_dir}/{model_filename}')
-            resnet.load_state_dict(checkpoint['model'])
-            epoch = checkpoint['epoch']
-    
-            checkpoint = torch.load(f'{args.log_dir}/{classifier_filename}')
-            classifier.load_state_dict(checkpoint['model'])
-    
-            print(f'Loading model: {args.checkpoint}, from epoch: {epoch}')
-        else:
-            print('Trained model not found!')
-            import sys
-            sys.exit()
-        
-        
-    
-        model = {'model': resnet.cuda(), 'classifier': classifier.cuda()}
-        run_inference(model, args)
+
+    model = {'model': resnet.cuda(), 'classifier': classifier.cuda()}
+    run_inference(model, args)

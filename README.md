@@ -98,7 +98,7 @@ python3 ./data_utils/segmentation.py --dataset SemanticKITTI --path ./Datasets/S
 Run the following to start the pre-training:
 
 ```
-python3 contrastive_train.py --use-cuda --use-intensity --segment-contrast --checkpoint segcontrast
+python3 contrastive_train.py --use-cuda
 ```
 
 The default parameters, e.g., learning rate, batch size and epochs are already the same as the paper.

@@ -106,9 +106,7 @@ The default parameters, e.g., learning rate, batch size and epochs are already t
 After pre-training you can run the downstream fine-tuning with:
 
 ```
-python3 downstream_train.py --use-cuda --use-intensity --checkpoint \
-        segment_contrast --contrastive --load-checkpoint --batch-size 2 \
-        --sparse-model MinkUNet --epochs 15
+python3 downstream_train.py --use-cuda --checkpoint segment_contrast --load-checkpoint --batch-size 2 --epochs 15
 ```
 
 We provide in `tools` the `contrastive_train.sh` and `downstream_train.sh` scripts to reproduce the results pre-training and fine-tuning with the different label percentages shown on the paper:

@@ -13,7 +13,7 @@ if __name__ == "__main__":
 
     parser.add_argument('--dataset-name', type=str, default='SemanticKITTI',
                         help='Name of dataset (default: SemanticKITTI')
-    parser.add_argument('--data-dir', type=str, default='/home/reza/PHD/Data/KITTI360/fps_knn',
+    parser.add_argument('--data-dir', type=str, default='./Datasets/KITTI360/fps_knn',
                         help='Path to dataset (default: ./Datasets/KITTI360')
     parser.add_argument('--batch-size', type=int, default=1, metavar='N',
                         help='input training batch-size')

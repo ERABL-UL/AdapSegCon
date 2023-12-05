@@ -15,7 +15,7 @@ warnings.filterwarnings('ignore')
 class SemanticKITTIDataLoader(Dataset):
     def __init__(self, root,  split='train', pre_training=True, resolution=0.05, percentage=None, intensity_channel=False):
         self.root = root
-        self.augmented_dir = 'augmented_views'
+        self.augmented_dir = 'segmented_views'
         self.n_clusters = 50
 
         if not os.path.isdir(os.path.join(self.root, self.augmented_dir)):

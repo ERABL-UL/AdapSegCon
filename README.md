@@ -1,8 +1,4 @@
-# SegContrast
-
-**[Paper](http://www.ipb.uni-bonn.de/pdfs/nunes2022ral-icra.pdf)** **|** **[Video](https://www.youtube.com/watch?v=kotRb_ySnIw)**
-
-![](pics/overview.png)
+# Self-Supervised Contrastive Learning for Semantic Segmentation of Outdoor LiDAR Point Clouds
 
 Installing pre-requisites:
 
@@ -54,22 +50,55 @@ Download [SemanticKITTI](http://www.semantic-kitti.org/dataset.html#download) in
             └── 21/
                 └── ...
 ```
+Download [KITTI-360](https://www.cvlibs.net/datasets/kitti-360/user_login.php) inside the directory ```./Datasets/KITTI-360```. The directory structure should be:
+```
+./
+└── Datasets/
+    └── KITTI360
+        └── train
+          └── sequences
+            ├── 00/           
+            │   ├── {start_frame:0>10}_{end_frame:0>10}.ply
+                └── ...
+        └── validation
+            └── sequences
+                ├── 00/
+                │   ├── {start_frame:0>10}_{end_frame:0>10}.ply
+                    └── ...
+        └── test
+            └── sequences
+                ├── 08/
+                │   ├── {start_frame:0>10}_{end_frame:0>10}.ply
+                |   └── ...
+                ├── 18/
+                │   ├── {start_frame:0>10}_{end_frame:0>10}.ply
+                    └── ...
+```
 
-# Pretrained Weights
-- SegContrast pretraining [weights](https://www.ipb.uni-bonn.de/html/projects/segcontrast/segcontrast_pretrain.zip)
-- Fine-tuned semantic segmentation
-    - 0.1% labels [weights](https://www.ipb.uni-bonn.de/html/projects/segcontrast/semantic_segmentation_weights/semseg_finetune_0p001.zip)
-    - 1% labels [weights](https://www.ipb.uni-bonn.de/html/projects/segcontrast/semantic_segmentation_weights/semseg_finetune_0p01.zip)
-    - 10% labels [weights](https://www.ipb.uni-bonn.de/html/projects/segcontrast/semantic_segmentation_weights/semseg_finetune_0p1.zip)
-    - 50% labels [weights](https://www.ipb.uni-bonn.de/html/projects/segcontrast/semantic_segmentation_weights/semseg_finetune_0p5.zip)
-    - 100% labels [weights](https://www.ipb.uni-bonn.de/html/projects/segcontrast/semantic_segmentation_weights/semseg_finetune_1p0.zip)
+First, we need to prepare large point clouds of KITTI-360 for the input of the network. We follow the instructions of [Mahmoudi Kouhi, Reza et al.](https://www.mdpi.com/2072-4292/15/4/982) to prepare the data:
+
+```
+python3 ./data_preparation/fps_knn_threading.py --path ./Datasets/KITTI-360/train \
+         --save-path ./Datasets/KITTI-360/fps_knn --split train
+python3 ./data_preparation/fps_knn_threading.py --path ./Datasets/KITTI-360/validation \
+         --save-path ./Datasets/KITTI-360/fps_knn --split validation
+```
+
+Now we need to segment the generated point clouds using RANSAC and DBScan:
+
+```
+python3 ./data_utils/segmentation.py --dataset KITTI360 --path ./Datasets/KITTI-360/fps_knn \
+         --save-path ./Datasets/segmented_views --split train --seq-ids [0,2,3,4,5,6,7,9,10]
+python3 ./data_utils/segmentation.py --dataset SemanticKITTI --path ./Datasets/SemanticKITTI \
+         --save-path ./Datasets/segmented_views --split train --seq-ids [0,1,2,3,4,5,6,7,9,10]
+```
 
 # Reproducing the results
 
 Run the following to start the pre-training:
 
 ```
-python3 contrastive_train.py --use-cuda --use-intensity --segment-contrast --checkpoint segcontrast
+python3 contrastive_train.py --use-cuda
 ```
 
 The default parameters, e.g., learning rate, batch size and epochs are already the same as the paper.
@@ -77,9 +106,7 @@ The default parameters, e.g., learning rate, batch size and epochs are already t
 After pre-training you can run the downstream fine-tuning with:
 
 ```
-python3 downstream_train.py --use-cuda --use-intensity --checkpoint \
-        segment_contrast --contrastive --load-checkpoint --batch-size 2 \
-        --sparse-model MinkUNet --epochs 15
+python3 downstream_train.py --use-cuda --checkpoint segment_contrast --load-checkpoint --batch-size 2 --epochs 15
 ```
 
 We provide in `tools` the `contrastive_train.sh` and `downstream_train.sh` scripts to reproduce the results pre-training and fine-tuning with the different label percentages shown on the paper:
@@ -106,17 +133,4 @@ Finally, to compute the IoU metrics use:
 
 If you use this repo, please cite as :
 
-```
-@article{nunes2022ral,
-    author = {L. Nunes and R. Marcuzzi and X. Chen and J. Behley and C. Stachniss},
-    title = {{SegContrast: 3D Point Cloud Feature Representation Learning through Self-supervised Segment Discrimination}},
-    journal = {{IEEE Robotics and Automation Letters (RA-L)}},
-    year = 2022,
-    doi = {10.1109/LRA.2022.3142440},
-    issn = {2377-3766},
-    volume = {7},
-    number = {2},
-    pages = {2116-2123},
-    url = {http://www.ipb.uni-bonn.de/pdfs/nunes2022ral-icra.pdf},
-}
-```
+

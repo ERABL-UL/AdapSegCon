@@ -1,4 +1,4 @@
-# Self-Supervised Contrastive Learning for Semantic Segmentation of Outdoor LiDAR Point Clouds
+# CLOUDSPAM: Contrastive Learning On Unlabeled Data for Segmentation and Pre-Training Using Aggregated Point Clouds and MoCo
 
 Installing pre-requisites:
 

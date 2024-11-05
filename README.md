@@ -132,6 +132,8 @@ Finally, to compute the IoU metrics use:
 # Citation
 
 If you use this repo, please cite : https://www.mdpi.com/2072-4292/16/21/3984
+
+```
 @Article{cloudspam,
 AUTHOR = {Mahmoudi Kouhi, Reza and Stocker, Olivier and Giguère, Philippe and Daniel, Sylvie},
 TITLE = {CLOUDSPAM: Contrastive Learning On Unlabeled Data for Segmentation and Pre-Training Using Aggregated Point Clouds and MoCo},
@@ -144,5 +146,6 @@ URL = {https://www.mdpi.com/2072-4292/16/21/3984},
 ISSN = {2072-4292},
 DOI = {10.3390/rs16213984}
 }
+```
 
 

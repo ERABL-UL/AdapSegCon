@@ -1,0 +1,14 @@
+!.gitignore
+
+*.pyc
+*.pyo
+*.ply
+*.tar
+
+checkpoint/
+cloudspam/
+cloudspam_zip/
+runs/
+test_results/
+lightning_logs/
+pics/

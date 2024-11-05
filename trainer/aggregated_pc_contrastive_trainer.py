@@ -3,13 +3,13 @@ from pytorch_lightning.metrics.functional.classification import iou
 from torch.utils.tensorboard import SummaryWriter
 import torch
 import torch.distributed as dist
-from data_utils.data_map import labels, content
+from data_utils import data_map_KITTI360, data_map_ParisLille3D, data_map_Toronto3D
 from data_utils.ioueval import iouEval
 from data_utils.collations import *
 from numpy import inf, pi, cos, mean
 from functools import partial
 
-class SemanticKITTIContrastiveTrainer(pl.LightningModule):
+class AggregatedPCContrastiveTrainer(pl.LightningModule):
     def __init__(self, model, criterion, train_loader, params, pre_training=True):
         super().__init__()
         self.moco_model = model
@@ -17,14 +17,19 @@ class SemanticKITTIContrastiveTrainer(pl.LightningModule):
         self.train_loader = train_loader
         self.params = params
         self.segment_contrast = self.params.segment_contrast
-        self.writer = SummaryWriter(f'runs/{params.checkpoint}')
-        self.iter_log = 100
+        self.writer = SummaryWriter(f'runs/pretraining/{params.checkpoint}')
+        self.iter_log = 1
         self.loss_eval = []
         self.train_step = 0
 
         if self.params.load_checkpoint:
             self.load_checkpoint()
-
+        if self.params.dataset_name == "KITTI360":
+            self.labels = data_map_KITTI360.labels
+        elif self.params.dataset_name == "ParisLille3D":
+            self.labels = data_map_ParisLille3D.labels
+        elif self.params.dataset_name == "Toronto3D":
+            self.labels = data_map_Toronto3D.labels
     ############################################################################################################################################
     # FORWARD                                                                                                                                  #
     ############################################################################################################################################
@@ -80,7 +85,7 @@ class SemanticKITTIContrastiveTrainer(pl.LightningModule):
     ############################################################################################################################################
 
     def checkpoint_callback(self):
-        if self.current_epoch % 10 == 0:
+        if self.current_epoch % 1 == 0:
             self.save_checkpoint(f'epoch{self.current_epoch}')
 
         if self.current_epoch == self.params.epochs - 1:
@@ -115,37 +120,37 @@ class SemanticKITTIContrastiveTrainer(pl.LightningModule):
     def write_summary(self, summary_id, report, iter):
         self.writer.add_scalar(summary_id, report, iter)
 
-    def contrastive_mesh_writer(self):
-        val_iterator = iter(self.train_loader)
+    # def contrastive_mesh_writer(self):
+    #     val_iterator = iter(self.train_loader)
 
-        # get just the first iteration(BxNxM) validation set point clouds
-        x, y = next(val_iterator)
-        z = self.forward(x)
-        for i in range(self.params.batch_size):
-            points = x.C.cpu().numpy()
-            labels = z.max(dim=1)[1].cpu().numpy()
+    #     # get just the first iteration(BxNxM) validation set point clouds
+    #     x, y = next(val_iterator)
+    #     z = self.forward(x)
+    #     for i in range(self.params.batch_size):
+    #         points = x.C.cpu().numpy()
+    #         labels = z.max(dim=1)[1].cpu().numpy()
 
-            batch_ind = points[:, 0] == i
-            points = expand_dims(points[batch_ind][:, 1:], 0) * self.params.sparse_resolution
-            colors = array([ color_map[lbl][::-1] for lbl in labels[batch_ind] ])
-            colors = expand_dims(colors, 0)
+    #         batch_ind = points[:, 0] == i
+    #         points = expand_dims(points[batch_ind][:, 1:], 0) * self.params.sparse_resolution
+    #         colors = array([ color_map[lbl][::-1] for lbl in labels[batch_ind] ])
+    #         colors = expand_dims(colors, 0)
 
-            point_size_config = {
-                'material': {
-                    'cls': 'PointsMaterial',
-                    'size': 0.3
-                }
-            }
+    #         point_size_config = {
+    #             'material': {
+    #                 'cls': 'PointsMaterial',
+    #                 'size': 0.3
+    #             }
+    #         }
         
-            self.writer.add_mesh(
-                f'validation_vis_{i}/point_cloud',
-                torch.from_numpy(points),
-                torch.from_numpy(colors),
-                config_dict=point_size_config,
-                global_step=self.current_epoch,
-            )
+    #         self.writer.add_mesh(
+    #             f'validation_vis_{i}/point_cloud',
+    #             torch.from_numpy(points),
+    #             torch.from_numpy(colors),
+    #             config_dict=point_size_config,
+    #             global_step=self.current_epoch,
+    #         )
 
-        del val_iterator
+    #     del val_iterator
 
     ############################################################################################################################################
 
@@ -157,13 +162,13 @@ class SemanticKITTIContrastiveTrainer(pl.LightningModule):
         self.configure_optimizers()
 
         # load model, best loss and optimizer
-        file_name = f'{self.params.log_dir}/bestloss_model_{self.params.checkpoint}.pt'
+        file_name = f'{self.params.log_dir}/epoch60_model_{self.params.checkpoint}.pt'
         checkpoint = torch.load(file_name)
         self.moco_model.model_q.load_state_dict(checkpoint['model'])
         self.optimizer.load_state_dict(checkpoint['optimizer'])
 
         # load model head
-        file_name = f'{self.params.log_dir}/bestloss_model_head_{self.params.checkpoint}.pt'
+        file_name = f'{self.params.log_dir}/epoch60_model_head_{self.params.checkpoint}.pt'
         checkpoint = torch.load(file_name)
         self.moco_model.head_q.load_state_dict(checkpoint['model'])
 
@@ -178,10 +183,8 @@ class SemanticKITTIContrastiveTrainer(pl.LightningModule):
             'params': self.params,
             'train_step': self.train_step,
         }
-        folder_name = f'{self.params.log_dir}'
-        file_name = f'{self.params.log_dir}/{checkpoint_id}_model_{self.params.checkpoint}.pt'
-        if os.path.isdir(folder_name) == False:
-            os.mkdir(folder_name)
+        file_name = f'{self.params.log_dir}/{self.params.checkpoint}/{checkpoint_id}_model_{self.params.checkpoint}.pt'
+
         torch.save(state, file_name)
 
         state = {
@@ -192,10 +195,10 @@ class SemanticKITTIContrastiveTrainer(pl.LightningModule):
             'params': self.params,
             'train_step': self.train_step,
         }
-        file_name = f'{self.params.log_dir}/{checkpoint_id}_model_head_{self.params.checkpoint}.pt'
+        file_name = f'{self.params.log_dir}/{self.params.checkpoint}/{checkpoint_id}_model_head_{self.params.checkpoint}.pt'
 
         torch.save(state, file_name)
-        torch.save(self.state_dict(), f'checkpoint/contrastive/{checkpoint_id}_full_model_{self.params.checkpoint}.pt')
+        torch.save(self.state_dict(), f'{self.params.log_dir}/{self.params.checkpoint}/{checkpoint_id}_full_model_{self.params.checkpoint}.pt')
 
     ############################################################################################################################################
 

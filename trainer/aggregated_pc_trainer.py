@@ -2,14 +2,13 @@ import pytorch_lightning as pl
 from pytorch_lightning.metrics.functional.classification import iou
 from torch.utils.tensorboard import SummaryWriter
 import torch
-from data_utils.data_map import labels, content, color_map
+from data_utils import data_map_KITTI360, data_map_ParisLille3D, data_map_Toronto3D
 from data_utils.ioueval import iouEval
 from data_utils.collations import *
 from numpy import inf, pi, cos, array, expand_dims
 from functools import partial
-import os
-# import OSToolBox as ost
-class SemanticKITTITrainer(pl.LightningModule):
+from testing import inference
+class AggregatedPCTrainer(pl.LightningModule):
     def __init__(self, model, model_head, criterion, train_loader, val_loader, params):
         super().__init__()
         self.model = model
@@ -18,19 +17,25 @@ class SemanticKITTITrainer(pl.LightningModule):
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.params = params
-        print(params.percentage_labels)
-        print(params.checkpoint_epoch)
-        self.writer = SummaryWriter(f'runs/{params.log_dir}_{params.checkpoint}_{params.checkpoint_epoch}')
+        self.writer = SummaryWriter(f'runs/{self.params.dataset_name}/graph/{self.params.checkpoint}_{self.params.percentage_labels}/{self.params.load_epoch}')
         self.iter_log = 100
         self.best_acc = -1.
         self.best_loss = inf
-        self.evaluator = iouEval(n_classes=len(content.keys()), ignore=0)
+        self.evaluator = iouEval(n_classes=self.params.num_classes, ignore=0)
         self.val_step = 0
         self.train_step = 0
 
         if self.params.load_checkpoint:
             self.load_checkpoint()
-
+        
+        if self.params.dataset_name == "KITTI360":
+            self.labels = data_map_KITTI360.labels
+        elif self.params.dataset_name == "ParisLille3D":
+            self.labels = data_map_ParisLille3D.labels
+        elif self.params.dataset_name == "Toronto3D":
+            self.labels = data_map_Toronto3D.labels
+        
+        
     ############################################################################################################################################
     # FORWARD                                                                                                                                 #
     ############################################################################################################################################
@@ -50,10 +55,11 @@ class SemanticKITTITrainer(pl.LightningModule):
     def training_step(self, batch, batch_nb):
         # for downstream task the batch is the sample x and labels y
         self.train_step += 1
-        x_coord, x_feats, x_label = batch
+        x_coord, x_feats, x_label, _, _ = batch
         x, y = numpy_to_sparse_tensor(x_coord, x_feats, x_label)
 
         y = y[:,0]
+
         z = self.forward(x)
         loss = self.criterion(z, y.long())
         pred = z.max(dim=1)[1]
@@ -78,34 +84,15 @@ class SemanticKITTITrainer(pl.LightningModule):
     ############################################################################################################################################
 
     def validation_step(self, batch, batch_nb):
-        # validation step for downstream task
-        self.val_step += 1
-        x_coord, x_feats, x_label = batch
-        x, y = numpy_to_sparse_tensor(x_coord, x_feats, x_label)
-        y = y[:,0]
-        
-        z = self.forward(x)
-
-        loss = self.criterion(z, y.long())
-        pred = z.max(dim=1)[1]
-        correct = pred.eq(y).sum().item()
-        correct /= y.size(0)
-        batch_acc = (correct * 100.)
-
-        self.downstream_iter_callback(loss.item(), batch_acc, pred, y, x.C, False)
-
-        return {'loss': loss.item(), 'acc': batch_acc}
+        pass
 
     def validation_epoch_end(self, outputs):
-        # at the end of each validation epoch will call our implemented callback to save the checkpoint
-        avg_loss = torch.FloatTensor([ x['loss'] for x in outputs ]).mean()
-        avg_acc = torch.FloatTensor([ x['acc'] for x in outputs ]).mean()
-        epoch_dict = {'avg_val_loss': avg_loss, 'avg_val_acc': avg_acc}
-        self.validation_epoch_callback(avg_loss, avg_acc)
+        if self.current_epoch == self.params.epochs - 1:
+            model_acc, model_miou, model_class_iou = inference(self.params.dataset_name, self.params.num_classes, self.model, self.model_head, self.val_loader)
+            self.downstream_iter_callback_val(model_acc, model_miou, model_class_iou)
+            self.validation_epoch_callback()
 
         torch.cuda.empty_cache()
-        return epoch_dict
-
     ############################################################################################################################################
 
     ############################################################################################################################################
@@ -146,22 +133,50 @@ class SemanticKITTITrainer(pl.LightningModule):
                 mean_iou.item(),
                 self.train_step if is_train else self.val_step,
             )
-
+            
             # per class iou
             for class_num in range(class_iou.shape[0]):
                 self.write_summary(
-                    f'training/per_class_iou/{labels[class_num]}' if is_train else f'validation/per_class_iou/{labels[class_num]}',
+                    f'training/per_class_iou/{self.labels[class_num]}' if is_train else f'validation/per_class_iou/{self.labels[class_num]}',
                     class_iou[class_num].item(),
                     self.train_step if is_train else self.val_step,
                 )
-
+            
+            if not is_train:
+                return mean_iou, class_iou
+            
             self.evaluator.reset()
 
-    def validation_epoch_callback(self, curr_loss, curr_acc):
-        self.save_checkpoint(f'epoch{self.current_epoch}')
+    def downstream_iter_callback_val(self, model_acc, model_miou, model_class_iou):
+        # after each iteration we log the losses on tensorboard
 
-        if self.current_epoch == self.params.epochs - 1:
-            self.save_checkpoint(f'lastepoch{self.current_epoch}')
+        if self.current_epoch % 1 == 0:
+              
+            # accuracy
+            self.write_summary(
+                'validation/acc',
+                model_acc,
+                self.current_epoch,
+            )
+
+            self.write_summary(
+                'validation/miou',
+                model_miou.item(),
+                self.current_epoch,
+            )
+
+            # per class iou
+            for class_num in range(model_class_iou.shape[0]):
+                self.write_summary(
+                    f'validation/per_class_iou/{self.labels[class_num]}',
+                    model_class_iou[class_num].item(),
+                    self.current_epoch,
+                )
+
+
+
+    def validation_epoch_callback(self):
+        self.save_checkpoint(f'lastepoch{self.current_epoch}')
 
         #self.validation_mesh_writer()
 
@@ -175,37 +190,37 @@ class SemanticKITTITrainer(pl.LightningModule):
     def write_summary(self, summary_id, report, iter):
         self.writer.add_scalar(summary_id, report, iter)
 
-    def validation_mesh_writer(self):
-        val_iterator = iter(self.val_loader)
+    # def validation_mesh_writer(self):
+    #     val_iterator = iter(self.val_loader)
 
-        # get just the first iteration(BxNxM) validation set point clouds
-        x, y = next(val_iterator)
-        z = self.forward(x)
-        for i in range(self.params.batch_size):
-            points = x.C.cpu().numpy()
-            labels = z.max(dim=1)[1].cpu().numpy()
+    #     # get just the first iteration(BxNxM) validation set point clouds
+    #     x, y = next(val_iterator)
+    #     z = self.forward(x)
+    #     for i in range(self.params.batch_size):
+    #         points = x.C.cpu().numpy()
+    #         labels = z.max(dim=1)[1].cpu().numpy()
 
-            batch_ind = points[:, 0] == i
-            points = expand_dims(points[batch_ind][:, 1:], 0) * self.params.sparse_resolution
-            colors = array([ color_map[lbl][::-1] for lbl in labels[batch_ind] ])
-            colors = expand_dims(colors, 0)
+    #         batch_ind = points[:, 0] == i
+    #         points = expand_dims(points[batch_ind][:, 1:], 0) * self.params.sparse_resolution
+    #         colors = array([ color_map[lbl][::-1] for lbl in labels[batch_ind] ])
+    #         colors = expand_dims(colors, 0)
 
-            point_size_config = {
-                'material': {
-                    'cls': 'PointsMaterial',
-                    'size': 0.3
-                }
-            }
+    #         point_size_config = {
+    #             'material': {
+    #                 'cls': 'PointsMaterial',
+    #                 'size': 0.3
+    #             }
+    #         }
         
-            self.writer.add_mesh(
-                f'validation_vis_{i}/point_cloud',
-                torch.from_numpy(points),
-                torch.from_numpy(colors),
-                config_dict=point_size_config,
-                global_step=self.current_epoch,
-            )
+    #         self.writer.add_mesh(
+    #             f'validation_vis_{i}/point_cloud',
+    #             torch.from_numpy(points),
+    #             torch.from_numpy(colors),
+    #             config_dict=point_size_config,
+    #             global_step=self.current_epoch,
+    #         )
 
-        del val_iterator
+    #     del val_iterator
 
     ############################################################################################################################################
 
@@ -218,13 +233,13 @@ class SemanticKITTITrainer(pl.LightningModule):
 
         if self.params.contrastive:
             # load model, best loss and optimizer
-            file_name = f'{self.params.load_dir}/{self.params.checkpoint_epoch}_model_contrastive_checkpoint.pt'
+            file_name = f'{self.params.log_dir}/pretraining/{self.params.load_epoch}_model_pretraining.pt'
             checkpoint = torch.load(file_name, map_location='cuda:0')
             self.model.load_state_dict(checkpoint['model'])
             print(f'Contrastive {file_name} loaded from epoch {checkpoint["epoch"]}')
         else:
             # load model, best loss and optimizer
-            file_name = f'{self.params.load_dir}/lastepoch199_model_{self.params.checkpoint}.pt'
+            file_name = f'{self.params.log_dir}/lastepoch199_model_segment_contrast.pt'
             checkpoint = torch.load(file_name)
             self.model.load_state_dict(checkpoint['model'])
             self.train_step = checkpoint['train_step']
@@ -234,7 +249,7 @@ class SemanticKITTITrainer(pl.LightningModule):
             print(f'{file_name} loaded from epoch {checkpoint["epoch"]}')
             
             # load model head
-            file_name = f'{self.params.load_dir}/lastepoch199_model_head_{self.params.checkpoint}.pt'
+            file_name = f'{self.params.log_dir}/lastepoch199_model_head_segment_contrast.pt'
             checkpoint = torch.load(file_name)
             self.model_head.load_state_dict(checkpoint['model'])
 
@@ -251,10 +266,7 @@ class SemanticKITTITrainer(pl.LightningModule):
             'train_step': self.train_step,
             'val_step': self.val_step,
         }
-        folder_name = f'{self.params.log_dir}'
-        file_name = f'{self.params.log_dir}/{checkpoint_id}_model_{self.params.checkpoint}.pt'
-        if os.path.isdir(folder_name) == False:
-            os.mkdir(folder_name)
+        file_name = f'{self.params.log_dir}/{self.params.checkpoint}/{self.params.dataset_name}/{self.params.percentage_labels}/{checkpoint_id}_model_{self.params.load_epoch}.pt'
 
         torch.save(state, file_name)
 
@@ -268,7 +280,7 @@ class SemanticKITTITrainer(pl.LightningModule):
             'train_step': self.train_step,
             'val_step': self.val_step,
         }
-        file_name = f'{self.params.log_dir}/{checkpoint_id}_model_head_{self.params.checkpoint}.pt'
+        file_name = f'{self.params.log_dir}/{self.params.checkpoint}/{self.params.dataset_name}/{self.params.percentage_labels}/{checkpoint_id}_model_head_{self.params.load_epoch}.pt'
 
         torch.save(state, file_name)
 

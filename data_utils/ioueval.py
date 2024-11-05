@@ -65,10 +65,10 @@ class iouEval:
     tp = conf.diag()
     fp = conf.sum(dim=1) - tp
     fn = conf.sum(dim=0) - tp
-    return tp, fp, fn
+    return tp, fp, fn, conf
 
   def getIoU(self):
-    tp, fp, fn = self.getStats()
+    tp, fp, fn, _ = self.getStats()
     intersection = tp
     union = tp + fp + fn + 1e-15
     iou = intersection / union
@@ -76,7 +76,7 @@ class iouEval:
     return iou_mean, iou  # returns "iou mean", "iou per class" ALL CLASSES
 
   def getacc(self):
-    tp, fp, fn = self.getStats()
+    tp, fp, fn, _ = self.getStats()
     total_tp = tp.sum()
     total = tp[self.include].sum() + fp[self.include].sum() + 1e-15
     acc_mean = total_tp / total

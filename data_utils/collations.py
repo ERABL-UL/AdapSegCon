@@ -48,14 +48,16 @@ def numpy_to_sparse_tensor(p_coord, p_feats, p_label=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     p_coord = ME.utils.batched_coordinates(array_to_sequence(p_coord), dtype=torch.float32)
     p_feats = ME.utils.batched_coordinates(array_to_torch_sequence(p_feats), dtype=torch.float32)[:, 1:]
+
     if p_label is not None:
         p_label = ME.utils.batched_coordinates(array_to_torch_sequence(p_label), dtype=torch.float32)[:, 1:]
+    
         return ME.SparseTensor(
                 features=p_feats,
                 coordinates=p_coord,
                 device=device,
             ), p_label.cuda()
-    
+
     return ME.SparseTensor(
                 features=p_feats,
                 coordinates=p_coord,
@@ -73,8 +75,24 @@ def point_set_to_coord_feats(point_set, labels, resolution, num_points, determin
             # for reproducibility we set the seed
             np.random.seed(42)
         mapping = np.random.choice(mapping, num_points, replace=False)
-    a = p_coord[mapping]
-    return a, p_feats[mapping], labels[mapping]
+
+    return p_coord[mapping], p_feats[mapping], labels[mapping]
+
+def point_set_to_coord_feats_inv(point_set, resolution, split, num_points, labels=None, deterministic=False):
+    p_feats = point_set.copy()
+    p_coord = np.round(point_set[:, :3] / resolution)
+    p_coord -= p_coord.min(0, keepdims=1)
+
+    _, mapping, inverse = ME.utils.sparse_quantize(coordinates=p_coord, return_index=True, return_inverse=True)
+    if len(mapping) > num_points:
+        if deterministic:
+            # for reproducibility we set the seed
+            np.random.seed(42)
+        mapping = np.random.choice(mapping, num_points, replace=False)
+    if split == 'test':
+        return p_coord[mapping], p_feats[mapping], inverse.numpy()
+    else:
+        return p_coord[mapping], p_feats[mapping], labels[mapping], inverse.numpy()
 
 def collate_points_to_sparse_tensor(pi_coord, pi_feats, pj_coord, pj_feats):
     # voxelize on a sparse tensor
@@ -135,33 +153,58 @@ class SparseAugmentedCollation:
         return (pi_coord, pi_feats, segment_i), (pj_coord, pj_feats, segment_j)
 
 class SparseCollation:
-    def __init__(self, resolution, num_points=80000):
+    def __init__(self, resolution, split, num_points=80000):
         self.resolution = resolution
         self.num_points = num_points
+        self.split = split
 
     def __call__(self, list_data):
-        points_set, labels = list(zip(*list_data))
+        if self.split != "test":
+            points_set, labels = list(zip(*list_data))
+    
+            points_set = np.asarray(points_set)
+            labels = np.asarray(labels)
 
-        points_set = np.asarray(points_set)
-        labels = np.asarray(labels)
+            p_feats = []
+            p_coord = []
+            p_label = []
+            p_inv = []
+            real_pc = []
+            for points, label in zip(points_set, labels):
+                coord, feats, label_, inv_inds = point_set_to_coord_feats_inv(points, self.resolution, self.split, self.num_points, label, True)
+                p_feats.append(feats)
+                p_coord.append(coord)
+                p_label.append(label_)
+                p_inv.append(inv_inds)
+                real_pc.append(points)
+    
+            p_feats = np.asarray(p_feats)
+            p_coord = np.asarray(p_coord)
+            p_label = np.asarray(p_label)
+            p_inv = np.asarray(p_inv)
+            real_pc = np.asarray(real_pc)
+    
+            return p_coord, p_feats, p_label, p_inv, real_pc
+        else:
+            points_set = list(zip(*list_data))
+    
+            points_set = np.asarray(points_set)
 
-        p_feats = []
-        p_coord = []
-        p_label = []
-        for points, label in zip(points_set, labels):
-            coord, feats, label_ = point_set_to_coord_feats(points, label, self.resolution, self.num_points, True)
-            p_feats.append(feats)
-            p_coord.append(coord)
-            p_label.append(label_)
-
-        p_feats = np.asarray(p_feats)
-        p_coord = np.asarray(p_coord)
-        p_label = np.asarray(p_label)
-
-        # if we directly map coords and feats to SparseTensor it will loose the map over the coordinates
-        # if the mapping between point and voxels are necessary, please use TensorField
-        # as in https://nvidia.github.io/MinkowskiEngine/demo/segmentation.html?highlight=segmentation
-        # we first create TensorFields and from it we create the sparse tensors, so we can map the coordinate
-        # features across different SparseTensors, i.e. output prediction and target labels
-
-        return p_coord, p_feats, p_label
+            p_feats = []
+            p_coord = []
+            p_inv = []
+            real_pc = []
+            points_set = np.transpose(points_set, [1,0,2])
+            for points in points_set:
+                coord, feats, inv_inds = point_set_to_coord_feats_inv(points, self.resolution, self.split, self.num_points, None, True)
+                p_feats.append(feats)
+                p_coord.append(coord)
+                p_inv.append(inv_inds)
+                real_pc.append(points)
+    
+            p_feats = np.asarray(p_feats)
+            p_coord = np.asarray(p_coord)
+            p_inv = np.asarray(p_inv)
+            real_pc = np.asarray(real_pc)
+    
+            return p_coord, p_feats, p_inv, real_pc

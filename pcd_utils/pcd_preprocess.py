@@ -47,6 +47,7 @@ def clusters_from_pcd(pcd, n_clusters):
     labels = np.array(pcd.cluster_dbscan(eps=0.25, min_points=10))
     lbls, counts = np.unique(labels, return_counts=True)
     cluster_info = np.array(list(zip(lbls[1:], counts[1:])))
+    print(cluster_info.shape)
     cluster_info = cluster_info[cluster_info[:,1].argsort()]
 
     clusters_labels = cluster_info[::-1][:n_clusters, 0]
@@ -62,7 +63,8 @@ def clusterize_pcd(points, n_clusters):
     _, inliers = pcd.segment_plane(distance_threshold=0.25, ransac_n=3, num_iterations=200)
     pcd_ = pcd.select_by_index(inliers, invert=True)
 
-    labels_ = np.expand_dims(clusters_from_pcd(pcd_, n_clusters), axis=-1)
+    if np.asarray(pcd_.points).shape[0] > 20:
+        labels_ = np.expand_dims(clusters_from_pcd(pcd_, n_clusters), axis=-1)
 
     # that is a blessing of array handling
     # pcd are an ordered list of points
@@ -74,7 +76,8 @@ def clusterize_pcd(points, n_clusters):
     mask = np.ones(labels.shape[0], dtype=bool)
     mask[inliers] = False
 
-    labels[mask] = labels_
+    if np.asarray(pcd_.points).shape[0] > 20:
+        labels[mask] = labels_
 
     return np.concatenate((points, labels), axis=-1)
 
